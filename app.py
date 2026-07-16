@@ -45,6 +45,7 @@ import cache_module
 
 # Enterprise Security & Payments
 import security_2fa, payment_gateway, realtime_dashboard
+import branch_module
 
 from auth import render_user_management
 
@@ -208,6 +209,7 @@ NAV_GROUPS = {
         t("nav.audit_trail"):     "Audit Trail",
         t("nav.user_management"):"User Management",
         t("nav.settings"):        "Settings",
+        t("nav.branch"):          "Branch",
     },
 }
 
@@ -309,6 +311,7 @@ ROUTES = {
     "Backup":             backup_module.render,
     "Security 2FA":      security_2fa.render,
     "Payment Gateway":   payment_gateway.render,
+    "Branch":            branch_module.render,
 }
 
 fn = ROUTES.get(PAGE)

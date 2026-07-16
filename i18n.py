@@ -104,6 +104,7 @@ LANG_BN = {
     "nav.payment_gateway":    "💳  Payment Gateway",
     "nav.audit_trail":        "🔍  Audit Trail",
     "nav.user_management":    "👥  ব্যবহারকারী",
+    "nav.branch":             "🏢  শাখা ব্যবস্থাপনা",
     "nav.settings":           "⚙️  সেটিংস",
     "nav.logout":             "🚪 লগআউট",
 
@@ -1217,7 +1218,7 @@ LANG_BN = {
     'branch.audit_switch_branch': '{name} শাখায় স্থানান্তরিত হয়েছে',
     'branch.switch_success': '{name} শাখায় সফলভাবে স্থানান্তরিত হয়েছেন।',
     'branch.create_heading': 'নতুন শাখা তৈরি করুন',
-    'branch.create_info': 'নতুন শাখা তৈরি করলে একটি আলাদা tenant অ্যাকাউন্ট, ডিফল্ট সেশন, ক্লাস ও অ্যাডমিন ইউজার (ইউজারনেম: admin, পাসওয়ার্ড: admin123) স্বয়ংক্রিয়ভাবে তৈরি হবে।',
+    'branch.create_info': 'নতুন শাখা তৈরি করলে একটি আলাদা tenant অ্যাকাউন্ট, ডিফল্ট সেশন, ক্লাস ও অ্যাডমিন ইউজার (ইউজারনেম: admin, পাসওয়ার্ড স্বয়ংক্রিয়ভাবে তৈরি হয়ে একবার দেখানো হবে) স্বয়ংক্রিয়ভাবে তৈরি হবে।',
     'branch.name_label': 'শাখার নাম',
     'branch.name_placeholder': 'যেমন: ঢাকা শাখা',
     'branch.address_label': 'ঠিকানা',
@@ -2374,6 +2375,7 @@ LANG_EN = {
     "nav.payment_gateway":    "💳  Payment Gateway",
     "nav.audit_trail":        "🔍  Audit Trail",
     "nav.user_management":    "👥  User Management",
+    "nav.branch":             "🏢  Branch Management",
     "nav.settings":           "⚙️  Settings",
     "nav.logout":             "🚪 Logout",
 
@@ -3487,7 +3489,7 @@ LANG_EN = {
     'branch.audit_switch_branch': 'Switched to {name} branch',
     'branch.switch_success': 'Successfully switched to {name} branch.',
     'branch.create_heading': 'Create a New Branch',
-    'branch.create_info': 'Creating a new branch automatically sets up a separate tenant account with a default session, classes, and an admin user (username: admin, password: admin123).',
+    'branch.create_info': 'Creating a new branch automatically sets up a separate tenant account with a default session, classes, and an admin user (username: admin, password auto-generated and shown once).',
     'branch.name_label': 'Branch Name',
     'branch.name_placeholder': 'e.g., Dhaka Branch',
     'branch.address_label': 'Address',

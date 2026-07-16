@@ -14,8 +14,33 @@ from error_handler import safe_db_error
 from i18n import t
 
 
-def _get_all_tenants():
-    return fetchall("SELECT id, madrasa_name, address, phone FROM tenants ORDER BY id")
+def _get_all_tenants(current_tenant_id):
+    """
+    Security fix (v9.0): আগে এই ফাংশন কোনো ফিল্টার ছাড়াই platform-এর সব
+    tenant রিটার্ন করত, আর Overview ট্যাবের "Switch" বাটন দিয়ে যেকোনো
+    admin যেকোনো অন্য tenant-এ সেশন সুইচ করতে পারতেন — একটা গুরুতর
+    cross-tenant data leak। এখন শুধু current_tenant_id যে branch_groups-এ
+    আছে সেই গ্রুপের tenant-গুলোই রিটার্ন করে (tenant_branches টেবিল দিয়ে,
+    migration 011-এ যোগ করা হয়েছিল কিন্তু এই মডিউল কখনো ব্যবহার করেনি)।
+    কোনো গ্রুপে না থাকলে শুধু নিজেকেই রিটার্ন করে।
+    """
+    group_row = fetchone(
+        "SELECT group_id FROM tenant_branches WHERE tenant_id=%s",
+        (current_tenant_id,),
+    )
+    if not group_row:
+        return fetchall(
+            "SELECT id, madrasa_name, address, phone FROM tenants WHERE id=%s",
+            (current_tenant_id,),
+        )
+    return fetchall(
+        """SELECT t.id, t.madrasa_name, t.address, t.phone
+           FROM tenants t
+           JOIN tenant_branches tb ON tb.tenant_id = t.id
+           WHERE tb.group_id = %s
+           ORDER BY t.id""",
+        (group_row["group_id"],),
+    )
 
 
 def _generate_temp_password(length: int = 12) -> str:
@@ -31,13 +56,32 @@ def _generate_temp_password(length: int = 12) -> str:
     return "".join(chars)
 
 
-def _create_branch_tenant(name, address, phone, email):
+def _create_branch_tenant(current_tenant_id, current_madrasa_name, name, address, phone, email):
     conn = get_connection()
     if not conn:
         return False, "DB error"
     try:
         temp_password = _generate_temp_password()
         with conn.cursor() as cur:
+            # Security fix (v9.0): নতুন branch তৈরি করার আগে current tenant-কে
+            # একটা branch_groups-এ যুক্ত নিশ্চিত করি (না থাকলে এখনই তৈরি করে,
+            # নিজেকে head office হিসেবে যুক্ত করি) — নাহলে নতুন tenant কোনো
+            # group-এ লিংক-ই হতো না, আর _get_all_tenants()-এর scoping কাজ করত না।
+            cur.execute("SELECT group_id FROM tenant_branches WHERE tenant_id=%s", (current_tenant_id,))
+            grp = cur.fetchone()
+            if grp:
+                group_id = grp["group_id"]
+            else:
+                cur.execute(
+                    "INSERT INTO branch_groups (group_name) VALUES (%s) RETURNING id",
+                    (f"{current_madrasa_name} — Branches",),
+                )
+                group_id = cur.fetchone()["id"]
+                cur.execute(
+                    "INSERT INTO tenant_branches (group_id, tenant_id, is_head_office) VALUES (%s,%s,TRUE)",
+                    (group_id, current_tenant_id),
+                )
+
             cur.execute(
                 """INSERT INTO tenants (madrasa_name, address, phone, email, slug)
                    VALUES (%s,%s,%s,%s,%s) RETURNING id""",
@@ -45,6 +89,10 @@ def _create_branch_tenant(name, address, phone, email):
                  name.lower().replace(" ", "_")[:30]),
             )
             new_tid = cur.fetchone()["id"]
+            cur.execute(
+                "INSERT INTO tenant_branches (group_id, tenant_id, is_head_office) VALUES (%s,%s,FALSE)",
+                (group_id, new_tid),
+            )
             # Seed default session + classes
             cur.execute(
                 """INSERT INTO academic_sessions (tenant_id, session_name, is_active)
@@ -159,7 +207,7 @@ def render():
     if role != "admin":
         alert(t("branch.admin_required"), "danger"); return
 
-    tenants = _get_all_tenants()
+    tenants = _get_all_tenants(tid)
 
     # #5 fix: সব tenant-এর stats একবারে আনি (3টা query), loop-এর ভেতরে নয়
     all_tenant_ids = [t["id"] for t in tenants]
@@ -213,6 +261,7 @@ def render():
                     st.error(t("branch.err_name_required"))
                 else:
                     ok, result = _create_branch_tenant(
+                        tid, st.session_state.get("madrasa_name", ""),
                         b_name.strip(), b_address.strip(), b_phone.strip(), b_email.strip()
                     )
                     if ok:

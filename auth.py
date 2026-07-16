@@ -332,6 +332,7 @@ ROLE_PERMISSIONS = {
         "Documents","Expense","Hostel","Library","WhatsApp","Backup",
         "Cache","Live Dashboard","Security 2FA","Payment Gateway",
         "Online Admission","Zakat","Parent Portal","Donors","Financial Overview",
+        "Branch",
     ],
     "staff": [
         "Dashboard","Admissions","Finance","Attendance",
