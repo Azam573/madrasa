@@ -1,0 +1,80 @@
+# scheduled_tasks.yml — Celery beat replacement for free-tier hosting
+#
+# Streamlit Community Cloud can't run a persistent Celery worker/beat/Redis,
+# so this workflow substitutes for workers/celery_app.py's beat_schedule:
+# each cron entry below fires scripts/run_scheduled_task.py with
+# task_always_eager=True (no broker needed, runs the task function directly
+# in this job's process, one-off).
+#
+# All times converted from Asia/Dhaka (UTC+6, as configured in
+# workers/celery_app.py's `timezone`) to UTC, since GitHub Actions cron is
+# always UTC. Keep these two files in sync if the Dhaka-time schedule ever
+# changes.
+
+name: Scheduled Tasks
+
+on:
+  schedule:
+    - cron: '0 2 * * *'    # daily_absence_alert        — 08:00 Dhaka daily
+    - cron: '0 3 1 * *'    # monthly_fee_reminder        — 09:00 Dhaka, 1st of month
+    - cron: '0 3 5 * *'    # donor_payment_reminder      — 09:00 Dhaka, 5th of month
+    - cron: '0 4 * * 0'    # weekly_due_alert            — 10:00 Dhaka, Sunday
+    - cron: '0 17 * * *'   # warmup_dashboard_cache      — 23:00 Dhaka daily
+    - cron: '0 16 28 * *'  # generate_monthly_report     — 22:00 Dhaka, 28th of month
+    - cron: '0 20 * * *'   # system_health_check         — 02:00 Dhaka daily
+    - cron: '0 21 * * *'   # automated_daily_backup      — 03:00 Dhaka daily
+    - cron: '0 22 * * 5'   # automated_weekly_backup     — 04:00 Dhaka, Saturday
+    - cron: '0 0 * * *'    # subscription_expiry_reminder — 06:00 Dhaka daily
+    - cron: '0 1 * * *'    # check_expired_subscriptions — 07:00 Dhaka daily
+  workflow_dispatch:
+    inputs:
+      task_name:
+        description: 'Task to run manually (see scripts/run_scheduled_task.py TASK_NAMES)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  run-task:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Determine task for this trigger
+        id: task
+        run: |
+          case "${{ github.event.schedule }}" in
+            '0 2 * * *')   echo "name=daily_absence_alert" >> "$GITHUB_OUTPUT" ;;
+            '0 3 1 * *')   echo "name=monthly_fee_reminder" >> "$GITHUB_OUTPUT" ;;
+            '0 3 5 * *')   echo "name=donor_payment_reminder" >> "$GITHUB_OUTPUT" ;;
+            '0 4 * * 0')   echo "name=weekly_due_alert" >> "$GITHUB_OUTPUT" ;;
+            '0 17 * * *')  echo "name=warmup_dashboard_cache" >> "$GITHUB_OUTPUT" ;;
+            '0 16 28 * *') echo "name=generate_monthly_report" >> "$GITHUB_OUTPUT" ;;
+            '0 20 * * *')  echo "name=system_health_check" >> "$GITHUB_OUTPUT" ;;
+            '0 21 * * *')  echo "name=automated_daily_backup" >> "$GITHUB_OUTPUT" ;;
+            '0 22 * * 5')  echo "name=automated_weekly_backup" >> "$GITHUB_OUTPUT" ;;
+            '0 0 * * *')   echo "name=subscription_expiry_reminder" >> "$GITHUB_OUTPUT" ;;
+            '0 1 * * *')   echo "name=check_expired_subscriptions" >> "$GITHUB_OUTPUT" ;;
+            '')            echo "name=${{ inputs.task_name }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Run task
+        env:
+          DATABASE_URL:         ${{ secrets.DATABASE_URL }}
+          FIELD_ENCRYPTION_KEY: ${{ secrets.FIELD_ENCRYPTION_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          WA_TOKEN:             ${{ secrets.WA_TOKEN }}
+          SMS_API_KEY:          ${{ secrets.SMS_API_KEY }}
+          SENTRY_DSN:           ${{ secrets.SENTRY_DSN }}
+          ENVIRONMENT:          production
+        run: python scripts/run_scheduled_task.py "${{ steps.task.outputs.name }}"
