@@ -1,0 +1,135 @@
+# ════════════════════════════════════════════════════════════════
+# CD Pipeline — Smart Madrasa ERP
+#
+# Trigger: main branch-এ push (মানে CI pass করে merge হওয়ার পর)
+#
+# ধাপ:
+#   1. Docker image build → GitHub Container Registry (ghcr.io)-তে push
+#      দুটি tag: :latest এবং :<git-sha> (rollback-এর জন্য)
+#   2. SSH দিয়ে সার্ভারে নতুন image pull + restart
+#   3. Health check — fail করলে আগের image-এ auto-rollback
+#
+# প্রয়োজনীয় GitHub Secrets (repo Settings → Secrets → Actions):
+#   DEPLOY_HOST      — সার্ভারের IP/hostname
+#   DEPLOY_USER      — SSH user (যেমন: deploy)
+#   DEPLOY_SSH_KEY   — সেই user-এর private key
+#
+# সার্ভারে আগে থেকে থাকতে হবে:
+#   - docker + docker compose
+#   - /opt/madrasa/docker-compose.yml (image: ghcr.io/<owner>/<repo>:latest)
+#   - /opt/madrasa/.env (production secrets — কখনোই git-এ নয়)
+# ════════════════════════════════════════════════════════════════
+name: CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}   # প্রয়োজনে হাতে চালানোর সুবিধা
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: false   # চলমান deploy কখনো মাঝপথে কাটা যাবে না
+
+jobs:
+  build-and-push:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    outputs:
+      image_sha: ${{ steps.meta.outputs.sha_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: meta
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}"
+          IMAGE="${IMAGE,,}"   # ghcr lowercase চায়
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=$IMAGE:${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.sha_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: production   # GitHub environment — approval rule যোগ করা যায়
+    steps:
+      - name: Deploy over SSH (with real rollback)
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          NEW_TAG: ${{ needs.build-and-push.outputs.image_sha }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: NEW_TAG
+          script_stop: true
+          # প্রয়োজন: docker-compose.yml-এ image লাইনটি হবে —
+          #   image: ${MADRASA_IMAGE:-ghcr.io/<owner>/<repo>:latest}
+          # আর MADRASA_IMAGE আসবে /opt/madrasa/.deploy_env থেকে।
+          script: |
+            set -e
+            cd /opt/madrasa
+
+            # Fix (brutal review #9): আগের rollback ছিল কাগুজে — :latest
+            # overwrite হয়ে যাওয়ায় "আগের image" বলে কিছু থাকত না।
+            # এখন প্রতিটি deploy exact sha-tag দিয়ে হয়, আর আগের tag
+            # ফাইলে রাখা থাকে — fail করলে সেটিতে ফিরে যাওয়া হয়।
+            PREV_TAG=$(grep -oP '(?<=^MADRASA_IMAGE=).*' .deploy_env 2>/dev/null || true)
+            echo "Previous: ${PREV_TAG:-none} → New: ${NEW_TAG}"
+
+            echo "MADRASA_IMAGE=${NEW_TAG}" > .deploy_env
+
+            echo "→ Pulling ${NEW_TAG}..."
+            docker compose --env-file .deploy_env pull
+
+            echo "→ Running DB migrations..."
+            docker compose --env-file .deploy_env run --rm api alembic upgrade head
+
+            echo "→ Restarting services..."
+            docker compose --env-file .deploy_env up -d
+
+            echo "→ Health check (30s timeout)..."
+            for i in $(seq 1 15); do
+              if curl -fsS http://localhost:8000/api/health > /dev/null; then
+                echo "✅ Healthy — deploy successful"
+                docker image prune -f > /dev/null
+                exit 0
+              fi
+              sleep 2
+            done
+
+            echo "❌ Health check failed — rolling back to ${PREV_TAG:-latest}"
+            if [ -n "$PREV_TAG" ]; then
+              echo "MADRASA_IMAGE=${PREV_TAG}" > .deploy_env
+              docker compose --env-file .deploy_env up -d
+              # Rollback নিজেও healthy কি না যাচাই
+              sleep 6
+              curl -fsS http://localhost:8000/api/health > /dev/null \
+                && echo "↩️  Rollback successful (${PREV_TAG})" \
+                || echo "🚨 Rollback-ও unhealthy — ম্যানুয়াল হস্তক্ষেপ দরকার!"
+            fi
+            exit 1

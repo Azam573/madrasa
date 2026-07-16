@@ -1,0 +1,167 @@
+# ════════════════════════════════════════════════════════════════
+# CI Pipeline — Smart Madrasa ERP
+# প্রতিটি push ও pull request-এ চলে। ৪টি gate:
+#   1. lint      — ruff (style + common bugs)
+#   2. security  — bandit (code) + pip-audit (dependency CVEs)
+#   3. test      — pytest (118 tests, DB mock দিয়ে)
+#   4. docker    — production image build হয় কি না যাচাই
+#
+# কোনো gate fail করলে merge block হবে (branch protection চালু করলে)।
+# ════════════════════════════════════════════════════════════════
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Gate 1: Lint ────────────────────────────────────────────────
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Ruff check
+        # E9/F63/F7/F82 = syntax errors ও undefined names — সবসময় block
+        # বাকি rules warning হিসেবে report হয়, build fail করে না (আপাতত)
+        run: |
+          ruff check . --select E9,F63,F7,F82 --output-format github
+          ruff check . --exit-zero --statistics
+      - name: Schema drift check
+        # Alembic migrations-ই schema-র একমাত্র source of truth হওয়া উচিত —
+        # কোনো module নিজস্ব CREATE TABLE সংজ্ঞায়িত করলে (migration-এ নেই এমন)
+        # এই gate fail করবে, যেন লুকানো table কখনো production-এ miss না হয়।
+        run: python scripts/check_schema_drift.py
+
+  # ── Gate 2: Security scan ───────────────────────────────────────
+  security:
+    name: Security (bandit + pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install scanners
+        run: pip install bandit pip-audit
+      - name: Bandit — code security scan
+        # High severity + high confidence issue থাকলে fail
+        run: bandit -r . -x ./tests -lll -iii
+      - name: pip-audit — dependency CVE scan
+        # Known CVE-যুক্ত dependency থাকলে report (আপাতত non-blocking,
+        # কারণ transitive dep-এর fix সবসময় হাতে থাকে না)
+        run: |
+          pip-audit -r requirements.lock -r requirements_api.lock \
+            --skip-editable || echo "::warning::pip-audit found vulnerable dependencies — review above"
+
+  # ── Gate 3: Tests ───────────────────────────────────────────────
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    env:
+      REDIS_URL: redis://localhost:6379/0
+      ENVIRONMENT: test
+      JWT_SECRET: ci-only-test-secret-not-used-in-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.lock -r requirements_api.lock -r requirements_test.lock
+      - name: Run test suite
+        run: pytest tests/ -v --tb=short
+      - name: Coverage report
+        # Coverage gate api/ package-এ scoped — REST layer-ই test target;
+        # Streamlit UI মডিউল (10k+ lines) unit-testable নয়, সেগুলো ধরলে
+        # সংখ্যাটা অর্থহীনভাবে কম দেখায়। বর্তমান: ~57%, gate: 50%।
+        run: |
+          pip install pytest-cov
+          pytest tests/ --ignore=tests/test_integration_e2e.py \
+            --cov=api --cov-report=term-missing --cov-fail-under=50 -q
+
+  # ── Gate 4: Integration tests (real PostgreSQL) ─────────────────
+  integration:
+    name: Integration (real Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: itest
+          POSTGRES_PASSWORD: itest
+          POSTGRES_DB: itest
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U itest"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      DATABASE_URL: postgresql://itest:itest@localhost:5432/itest
+      INTEGRATION_DATABASE_URL: postgresql://itest:itest@localhost:5432/itest
+      REDIS_URL: redis://localhost:6379/0
+      ENVIRONMENT: test
+      JWT_SECRET: ci-only-test-secret-not-used-in-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.lock -r requirements_api.lock -r requirements_test.lock
+      - name: Run migrations (schema-র একমাত্র source of truth)
+        run: alembic upgrade head
+      - name: End-to-end tests
+        run: pytest tests/test_integration_e2e.py -v --tb=short
+      - name: Streamlit app smoke tests (real DB, not mocked)
+        # app.py + সব মডিউল — এখানেই bootstrap-ordering, SQL column, ও
+        # connection-pool bug যাচাই হয় (এই তিনটাই আগে কোনো টেস্টে ধরা পড়েনি,
+        # কারণ বাকি সব টেস্ট শুধু api/ layer covers করে, মকড db.py দিয়ে)।
+        run: pytest tests/test_streamlit_smoke.py -v --tb=short
+
+  # ── Gate 5: Docker build ────────────────────────────────────────
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    needs: [lint, test, integration]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: smart-madrasa-erp:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
