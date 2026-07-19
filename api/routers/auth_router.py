@@ -132,5 +132,9 @@ def logout_all_devices(
 
 @router.get("/me")
 @limiter.limit(RATE_LIMITS["read"])
-def me(request: Request, current_user: dict = Depends(get_current_user)):
+def me(
+    request: Request,
+    response: Response,  # slowapi rate-limit header injection-এর জন্য আবশ্যক
+    current_user: dict = Depends(get_current_user),
+):
     return {"success": True, "user": current_user}

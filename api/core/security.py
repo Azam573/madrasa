@@ -10,7 +10,7 @@ Token-based auth, role verification, tenant isolation।
 
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -82,7 +82,11 @@ def verify_password(plain: str, stored_hash: str) -> bool:
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
-    issued_at = datetime.utcnow()
+    # Fix: datetime.utcnow() is naive -- .timestamp() on a naive datetime
+    # silently uses the *local* system timezone, not UTC, so iat was off by
+    # the server's UTC offset (e.g. 6 hours on a server set to Asia/Dhaka).
+    # That corrupted every cutoff comparison in is_user_globally_revoked().
+    issued_at = datetime.now(timezone.utc)
     expire = issued_at + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({
         "exp":  expire,
@@ -95,7 +99,11 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
 
 def create_refresh_token(data: dict) -> str:
     to_encode = data.copy()
-    issued_at = datetime.utcnow()
+    # Fix: datetime.utcnow() is naive -- .timestamp() on a naive datetime
+    # silently uses the *local* system timezone, not UTC, so iat was off by
+    # the server's UTC offset (e.g. 6 hours on a server set to Asia/Dhaka).
+    # That corrupted every cutoff comparison in is_user_globally_revoked().
+    issued_at = datetime.now(timezone.utc)
     expire = issued_at + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     to_encode.update({
         "exp":  expire,
