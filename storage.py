@@ -15,9 +15,27 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger("madrasa.storage")
 
-STORAGE_PROVIDER = os.environ.get("STORAGE_PROVIDER", "supabase")  # supabase | s3 | local
-STORAGE_BUCKET   = os.environ.get("STORAGE_BUCKET", "madrasa-files")
-LOCAL_UPLOAD_DIR = os.environ.get("LOCAL_UPLOAD_DIR", "uploads")
+
+def _cfg(key: str, default: str = "") -> str:
+    """
+    Fix: Streamlit Community Cloud secrets live in st.secrets, not
+    os.environ -- os.environ.get() alone always returned "" there, so
+    SupabaseStorage.available was always False and every upload silently
+    fell back to LocalStorage (ephemeral on Streamlit Cloud -- lost on
+    every redeploy). Matches db.py's established st.secrets-first pattern.
+    """
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return os.environ.get(key, default)
+
+
+STORAGE_PROVIDER = _cfg("STORAGE_PROVIDER", "supabase")  # supabase | s3 | local
+STORAGE_BUCKET   = _cfg("STORAGE_BUCKET", "madrasa-files")
+LOCAL_UPLOAD_DIR = _cfg("LOCAL_UPLOAD_DIR", "uploads")
 
 
 # ─────────────────────────────────────────────
@@ -28,8 +46,8 @@ class SupabaseStorage:
     def __init__(self):
         try:
             from supabase import create_client
-            url = os.environ.get("SUPABASE_URL", "")
-            key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+            url = _cfg("SUPABASE_URL", "")
+            key = _cfg("SUPABASE_SERVICE_KEY", "")
             if url and key:
                 self.client = create_client(url, key)
                 self.available = True
@@ -85,12 +103,12 @@ class S3Storage:
             import boto3
             self.s3 = boto3.client(
                 "s3",
-                aws_access_key_id     = os.environ.get("AWS_ACCESS_KEY_ID"),
-                aws_secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY"),
-                region_name           = os.environ.get("AWS_REGION", "ap-south-1"),
+                aws_access_key_id     = _cfg("AWS_ACCESS_KEY_ID"),
+                aws_secret_access_key = _cfg("AWS_SECRET_ACCESS_KEY"),
+                region_name           = _cfg("AWS_REGION", "ap-south-1"),
             )
-            self.bucket    = os.environ.get("S3_BUCKET", STORAGE_BUCKET)
-            self.cdn_url   = os.environ.get("CDN_URL", "")
+            self.bucket    = _cfg("S3_BUCKET", STORAGE_BUCKET)
+            self.cdn_url   = _cfg("CDN_URL", "")
             self.available = True
         except ImportError:
             self.available = False
