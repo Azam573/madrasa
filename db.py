@@ -150,7 +150,13 @@ def bootstrap_schema() -> bool:
         # পড়ে না — logging/config file ছাড়াই migration চালানোর জন্য যথেষ্ট।
         cfg = Config()
         cfg.set_main_option("script_location", os.path.join(base, "migrations"))
-        cfg.set_main_option("sqlalchemy.url", _build_dsn() or _fallback_dsn())
+        # Fix: cfg.set_main_option("sqlalchemy.url", ...) round-trips the DSN
+        # through ConfigParser, which crashes on a literal "%" (e.g. "%40"
+        # for "@" in a real managed-Postgres password like Supabase's) —
+        # same bug already fixed in migrations/env.py. env.py reads the DSN
+        # straight from this env var instead, so set that here rather than
+        # ever handing the raw DSN to ConfigParser.
+        os.environ["DATABASE_URL"] = _build_dsn() or _fallback_dsn()
         command.upgrade(cfg, "head")
         return True
     except Exception as e:
