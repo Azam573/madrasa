@@ -9,7 +9,7 @@
 # - /app/uploads ও /app/logs writeable করা হয়েছে
 # ════════════════════════════════════════════════════════════════
 
-FROM python:3.11-slim AS base
+FROM python:3.12-slim AS base
 
 # ── System dependencies ──────────────────────────────────────────
 RUN apt-get update && apt-get install -y \
