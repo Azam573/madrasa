@@ -41,7 +41,14 @@ def main():
 
     from workers.celery_app import celery_app
     celery_app.conf.task_always_eager = True
-    celery_app.conf.task_eager_propagates = True
+    # Fix: propagates=True made nested .delay() calls (e.g.
+    # send_whatsapp_message.delay() inside monthly_fee_reminder()) raise
+    # straight into the caller the moment WA_TOKEN/SMS_API_KEY aren't
+    # configured -- crashing the whole scheduled task on its first unpaid
+    # voucher. A real Celery worker's .delay() never blocks/raises like
+    # that; propagates=False restores that same fire-and-forget behavior
+    # for eager mode (the failure is still logged, just not fatal here).
+    celery_app.conf.task_eager_propagates = False
 
     import workers.tasks as tasks
     fn = getattr(tasks, task_name)
