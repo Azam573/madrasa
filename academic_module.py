@@ -136,6 +136,7 @@ def _class_result_summary(tid, exam_id, class_id, session_id):
     return results
 
 
+@st.cache_data(ttl=300)
 def _tenant_name(tid):
     row = fetchone("SELECT madrasa_name FROM tenants WHERE id=%s", (tid,))
     return row["madrasa_name"] if row else "Smart Madrasa ERP"

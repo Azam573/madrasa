@@ -1,0 +1,35 @@
+# keep_alive.yml — Streamlit Community Cloud-এর অ্যাপ ঘুমিয়ে পড়া ঠেকায়
+#
+# Free-tier অ্যাপ ১২ ঘণ্টা কোনো ভিজিটর না পেলে ঘুমিয়ে পড়ে, এবং পরের
+# ভিজিটরকে "Yes, get this app back up!" বাটনে ক্লিক করে জাগাতে হয় —
+# plain HTTP GET/curl দিয়ে জাগে না। এই workflow headless ব্রাউজার (Playwright)
+# দিয়ে প্রতি ৬ ঘণ্টায় অ্যাপ ভিজিট করে সেই বাটন থাকলে ক্লিক করে দেয়, যাতে
+# আসল ব্যবহারকারীকে কখনো ঘুমন্ত অ্যাপ দেখতে না হয়।
+
+name: Keep App Awake
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # প্রতি ৬ ঘণ্টায় — ১২-ঘণ্টার sleep সীমার নিরাপদ মার্জিন
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Visit app (wakes it if asleep)
+        run: python scripts/keep_app_awake.py

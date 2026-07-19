@@ -15,30 +15,35 @@ _METHOD_LABEL_MAP_KEYS = {
 }
 
 
+@st.cache_data(ttl=30)
 def _system_kpis(tid):
+    # 6 আলাদা round-trip-এর বদলে একটাই কোয়েরি (subquery দিয়ে) — Supabase
+    # রিমোট হওয়ায় প্রতিটা round-trip-এ নেটওয়ার্ক লেটেন্সি যোগ হতো।
     yr = current_year()
-    total_students = fetchone("SELECT COUNT(*) AS n FROM students WHERE tenant_id=%s AND status='active'", (tid,))
-    pending        = fetchone("SELECT COUNT(*) AS n FROM students WHERE tenant_id=%s AND status='pending'", (tid,))
-    total_classes  = fetchone("SELECT COUNT(*) AS n FROM classes WHERE tenant_id=%s", (tid,))
-    monthly_due    = fetchone(
-        "SELECT COALESCE(SUM(amount),0) AS n FROM fee_vouchers WHERE tenant_id=%s AND status='unpaid' AND year=%s",
-        (tid, yr),
+    row = fetchone(
+        """SELECT
+             (SELECT COUNT(*) FROM students WHERE tenant_id=%(tid)s AND status='active')  AS active_students,
+             (SELECT COUNT(*) FROM students WHERE tenant_id=%(tid)s AND status='pending') AS pending,
+             (SELECT COUNT(*) FROM classes  WHERE tenant_id=%(tid)s)                      AS classes,
+             (SELECT COALESCE(SUM(amount),0) FROM fee_vouchers
+                WHERE tenant_id=%(tid)s AND status='unpaid' AND year=%(yr)s)              AS outstanding,
+             (SELECT COALESCE(SUM(amount),0) FROM fee_vouchers
+                WHERE tenant_id=%(tid)s AND status='paid' AND year=%(yr)s)                AS collected,
+             (SELECT COUNT(*) FROM exams WHERE tenant_id=%(tid)s)                         AS exams
+        """,
+        {"tid": tid, "yr": yr},
     )
-    collected_yr   = fetchone(
-        "SELECT COALESCE(SUM(amount),0) AS n FROM fee_vouchers WHERE tenant_id=%s AND status='paid' AND year=%s",
-        (tid, yr),
-    )
-    total_exams    = fetchone("SELECT COUNT(*) AS n FROM exams WHERE tenant_id=%s", (tid,))
     return {
-        "active_students": int(total_students["n"]) if total_students else 0,
-        "pending":         int(pending["n"]) if pending else 0,
-        "classes":         int(total_classes["n"]) if total_classes else 0,
-        "outstanding":     float(monthly_due["n"]) if monthly_due else 0.0,
-        "collected":       float(collected_yr["n"]) if collected_yr else 0.0,
-        "exams":           int(total_exams["n"]) if total_exams else 0,
+        "active_students": int(row["active_students"]) if row else 0,
+        "pending":         int(row["pending"]) if row else 0,
+        "classes":         int(row["classes"]) if row else 0,
+        "outstanding":     float(row["outstanding"]) if row else 0.0,
+        "collected":       float(row["collected"]) if row else 0.0,
+        "exams":           int(row["exams"]) if row else 0,
     }
 
 
+@st.cache_data(ttl=30)
 def _recent_admissions(tid):
     return fetchall(
         """SELECT s.name, s.father_name, s.created_at, s.status,
@@ -53,6 +58,7 @@ def _recent_admissions(tid):
     )
 
 
+@st.cache_data(ttl=30)
 def _recent_payments(tid):
     return fetchall(
         """SELECT p.amount_paid, p.payment_date, p.payment_method,
@@ -66,6 +72,7 @@ def _recent_payments(tid):
     )
 
 
+@st.cache_data(ttl=60)
 def _class_enrollment_breakdown(tid):
     return fetchall(
         """SELECT c.class_name, COUNT(e.id) AS count
@@ -79,6 +86,7 @@ def _class_enrollment_breakdown(tid):
     )
 
 
+@st.cache_data(ttl=60)
 def _monthly_collection_trend(tid):
     yr = current_year()
     rows = fetchall(
@@ -91,10 +99,15 @@ def _monthly_collection_trend(tid):
     return {r["month_name"]: float(r["total"]) for r in rows}
 
 
+@st.cache_data(ttl=300)
+def _tenant_name(tid):
+    row = fetchone("SELECT madrasa_name FROM tenants WHERE id=%s", (tid,))
+    return row["madrasa_name"] if row else "Smart Madrasa"
+
+
 def render():
     tid = get_tenant_id()
-    tenant = fetchone("SELECT madrasa_name FROM tenants WHERE id=%s", (tid,))
-    madrasa = tenant["madrasa_name"] if tenant else "Smart Madrasa"
+    madrasa = _tenant_name(tid)
 
     page_header(
         "🕌",

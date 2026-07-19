@@ -161,6 +161,7 @@ def _fund_breakdown(tid, year):
     return {r["fund_type"]: float(r["total"]) for r in rows}
 
 
+@st.cache_data(ttl=300)
 def _tenant_name(tid):
     row = fetchone("SELECT madrasa_name FROM tenants WHERE id=%s", (tid,))
     return row["madrasa_name"] if row else "Smart Madrasa ERP"
