@@ -6,6 +6,7 @@ Admin ও Accountant-এর জন্য 2FA বাধ্যতামূলক�
 
 import os
 import io
+import json
 import time
 import base64
 import hashlib
@@ -115,13 +116,21 @@ def enable_totp(user_id: int, tenant_id: int, secret: str) -> bool:
     if not conn: return False
     try:
         with conn.cursor() as cur:
+            # Fix: backup_codes is a JSON column -- str(backup) produces
+            # Python's single-quoted repr (['12345678', ...]), which
+            # Postgres's JSON type rejects outright ("invalid input syntax
+            # for type json"). This made enable_totp() fail on every call,
+            # silently (the caller has no error branch for it), so 2FA
+            # activation could never succeed no matter what code was
+            # entered. json.dumps() matches what verify_backup_code()
+            # already reads/writes elsewhere in this same file.
             cur.execute(
                 """INSERT INTO user_2fa (tenant_id, user_id, totp_secret, totp_enabled, backup_codes)
                    VALUES (%s,%s,%s,TRUE,%s)
                    ON CONFLICT (user_id) DO UPDATE
                      SET totp_secret=%s, totp_enabled=TRUE, backup_codes=%s""",
-                (tenant_id, user_id, secret, str(backup),
-                 secret, str(backup)),
+                (tenant_id, user_id, secret, json.dumps(backup),
+                 secret, json.dumps(backup)),
             )
         conn.commit()
         return True
@@ -323,6 +332,13 @@ def render():
                             st.success(t("2fa.msg_activated"))
                             st.session_state.pop("totp_secret", None)
                             st.rerun()
+                        else:
+                            # Fix: enable_totp() failing (DB error, etc.)
+                            # previously showed nothing at all -- the user
+                            # just saw the same setup form again with no
+                            # explanation, indistinguishable from a wrong
+                            # code.
+                            st.error(t("2fa.err_activation_failed"))
                     else:
                         st.error(t("2fa.err_wrong_code"))
 
