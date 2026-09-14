@@ -7,10 +7,7 @@ platform_admins-এর জন্য কোনো self-service সাইনআপ
 আবার চালান — এটা শুধু প্রথমবারের জন্য না, চলমান ব্যবস্থাপনার পদ্ধতি।
 
 Usage: python create_platform_admin.py
-"""Username: Sofi Azam
-Full name: Sofi Azam
-Password: maimun@123
-Confirm password:maimun@123
+"""
 import os, sys, getpass
 sys.path.insert(0, os.path.dirname(__file__))
 
